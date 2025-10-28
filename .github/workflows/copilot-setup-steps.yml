@@ -1,0 +1,74 @@
+name: Copilot Setup Steps
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/copilot-setup-steps.yml'
+
+env:
+  ACTIONS_CACHE_VERSION: 2
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Clojure CLI (latest official installer)
+        run: |
+          curl -O https://download.clojure.org/install/linux-install.sh
+          chmod +x linux-install.sh
+          sudo ./linux-install.sh
+          clojure --version
+
+      - name: Install babashka
+        run: |
+          bash < <(curl -s https://raw.githubusercontent.com/babashka/babashka/master/install)
+          bb --version
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+      
+      - name: Install ClojureCLR and cljr
+        run: |
+          # Install ClojureCLR as a dotnet tool
+          dotnet tool install --global Clojure.Main --version 1.12.3-alpha3
+          # Install cljr CLI tool
+          dotnet tool install --global Clojure.Cljr --version 0.1.0-alpha8
+          echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+
+      - name: Restore dependency cache
+        id: cache-deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: ${{ env.ACTIONS_CACHE_VERSION }}-deps-${{ hashFiles('**/deps.edn') }}
+     
+      - name: Debug cache outputs
+        run: |
+          echo "cache-hit: ${{ steps.cache-deps.outputs.cache-hit }}"
+          echo "cache-matched-key: ${{ steps.cache-deps.outputs.cache-matched-key }}"
+
+      - name: Download dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: |
+          clojure -A:test -Stree
+          cljr -A:test -Stree
+
+      - name: Save dependency cache
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: ${{ env.ACTIONS_CACHE_VERSION }}-deps-${{ hashFiles('**/deps.edn') }}
