@@ -1,5 +1,5 @@
 {:paths ["src" "resources"]
  :deps {borkdude/edamame {:git/url "https://github.com/borkdude/edamame"
-                         :git/tag "v1.5.33"
-                         :git/sha "f429cf7f44aa83d92f12fd5d52e06387c517a19d"}
-        org.babashka/sci.impl.types {:local/root "../sci.impl.types"}}}
+                          :git/tag "v1.5.33"
+                          :git/sha "f429cf7f44aa83d92f12fd5d52e06387c517a19d"}
+        org.babashka/sci.impl.types {:local/root "types"}}}
