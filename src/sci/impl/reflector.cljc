@@ -13,6 +13,7 @@
 ;; FISupport - extracted from Compiler to support functional interface adaptation
 #?(:clj
    (do
+     ;; AFn already implements these functional interfaces, so we don't need to adapt them
      (def ^:private afn-fis
        #{java.util.concurrent.Callable
          java.lang.Runnable
