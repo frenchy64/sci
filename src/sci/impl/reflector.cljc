@@ -1,8 +1,16 @@
+;   Copyright (c) Rich Hickey. All rights reserved.
+;   The use and distribution terms for this software are covered by the
+;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+;   which can be found in the file epl-v10.html at the root of this distribution.
+;   By using this software in any fashion, you are agreeing to be bound by
+;   the terms of this license.
+;   You must not remove this notice, or any other, from this software.
+
 (ns sci.impl.reflector
   "Minimal reflection support for SCI.
 
   JVM notes:
-  - mostly based on clojure.java.Reflector
+  - mostly based on clojure.java.Reflector (transliterated by Claude Sonnet 4.5)
     - made invokeMatchingMethod public via invoke-matching-method
       - added arg-types to allow type hints to steer reflection resolution
   - FISupport - extracted from Compiler to support functional interface adaptation"
@@ -11,7 +19,7 @@
      (:import [java.lang.reflect Method Modifier Proxy]
               [clojure.lang Reflector Compiler IFn RT])))
 
-#?(:cljs nil :default (set! *warn-on-reflection* :warn-on-boxed))
+#?(:clj (set! *warn-on-reflection* :warn-on-boxed))
 
 ;; FISupport
 
@@ -237,26 +245,30 @@
 #?(:clj
    (defn- match-method
      "Find the best matching method from a list of methods given args and optional arg-types."
-     [methods args arg-types]
-     (loop [methods methods
-            found-m nil]
-       (if-let [^Method m (first methods)]
-         (let [params (.getParameterTypes m)]
-           (if (and (is-congruent? params args arg-types)
-                    (or (nil? found-m)
-                        (Compiler/subsumes params (.getParameterTypes ^Method found-m))))
-             (recur (rest methods) m)
-             (recur (rest methods) found-m)))
-         found-m))))
+     [^java.util.List methods args arg-types]
+     (let [size (.size methods)]
+       (loop [i 0
+              found-m nil]
+         (if (< i size)
+           (if-let [^Method m (.get methods i)]
+             (let [params (.getParameterTypes m)]
+               (if (and (is-congruent? params args arg-types)
+                        (or (nil? found-m)
+                            (Compiler/subsumes params (.getParameterTypes ^Method found-m))))
+                 (recur (inc i) m)
+                 (recur (inc i) found-m)))
+             found-m)
+           found-m)))))
 
 #?(:clj
-   (defn- widen-boxed-args
-     "Widen boxed numeric arguments (e.g., Integer -> Long, Float -> Double)."
+   (defn- widen-boxed-args!
+     "Widen boxed numeric arguments (e.g., Integer -> Long, Float -> Double).
+      Mutates args"
      [^objects args]
-     (let [widened (object-array (alength args))]
+     (let [widened args]
        (dotimes [i (alength args)]
          (let [arg (aget args i)]
-           (if (some? arg)
+           (when (some? arg)
              (let [val-class (.getClass ^Object arg)]
                (aset widened i
                      (cond
@@ -267,8 +279,7 @@
                        (.doubleValue ^Number arg)
 
                        :else
-                       arg)))
-             (aset widened i nil))))
+                       arg))))))
        widened)))
 
 #?(:clj
@@ -277,7 +288,7 @@
       This is the core SCI-specific method that supports type hints via arg-types.
       Parameters:
       - method-name: String name of the method
-      - methods: java.util.List of Method objects
+      - methods: java.util.List of Method objects (retured by getMethods)
       - context-class: Class for error messages (can be nil for static methods)
       - target: Object to invoke on (nil for static methods)
       - args: Object array of arguments
@@ -288,42 +299,41 @@
                               target args nil))
      ([method-name methods context-class target args]
       (invoke-matching-method method-name methods context-class target args nil))
-     ([method-name methods context-class target args arg-types]
-      (let [methods (seq methods)]
-        (if (empty? methods)
-          (throw (IllegalArgumentException.
-                  (str "No matching method " method-name " found taking "
-                       (alength ^objects args) " args"
-                       (when context-class (str " for " context-class)))))
-          (let [^Method m (if (== 1 (count methods))
-                            (first methods)
-                            (or (match-method methods args arg-types)
-                                ;; widen boxed args and re-try
-                                (match-method methods (widen-boxed-args args) arg-types)))]
-            (if (nil? m)
-              (throw (IllegalArgumentException.
-                      (str "No matching method " method-name " found taking "
-                           (alength ^objects args) " args"
-                           (when context-class (str " for " context-class)))))
-              ;; Use Reflector's helper to find accessible version of method
-              (let [^Method
-                    accessible-m (if (or (not (Modifier/isPublic
-                                                (.getModifiers (.getDeclaringClass m))))
-                                         (and target
-                                              (not (.canAccess m target))))
-                                   (clojure.lang.Reflector/getAsMethodOfAccessibleBase (or context-class (.getDeclaringClass m))
-                                                                                       m
-                                                                                       target)
-                                   m)]
-                (when (nil? accessible-m)
-                  (throw (IllegalArgumentException.
-                          (str "Can't call public method of non-public class: " m))))
-                (try
-                  (let [ret (.invoke accessible-m target (box-args (.getParameterTypes accessible-m) args))]
-                    (Reflector/prepRet (.getReturnType accessible-m) ret))
-                  (catch Exception e
-                    (throw (clojure.lang.Util/sneakyThrow
-                            (or (.getCause e) e))))))))))))
+     ([method-name ^java.util.List methods context-class target ^objects args arg-types]
+      (if (.isEmpty methods)
+        (throw (IllegalArgumentException.
+                (str "No matching method " method-name " found taking "
+                     (alength args) " args"
+                     (when context-class (str " for " context-class)))))
+        (let [^Method m (if (== 1 (.size methods))
+                          (.get methods 0)
+                          (or (match-method methods args arg-types)
+                              ;; widen boxed args and re-try
+                              (match-method methods (widen-boxed-args! args) arg-types)))]
+          (if (nil? m)
+            (throw (IllegalArgumentException.
+                    (str "No matching method " method-name " found taking "
+                         (alength args) " args"
+                         (when context-class (str " for " context-class)))))
+            ;; Use Reflector's helper to find accessible version of method
+            (let [^Method
+                  accessible-m (if (or (not (Modifier/isPublic
+                                             (.getModifiers (.getDeclaringClass m))))
+                                       (and target
+                                            (not (.canAccess m target))))
+                                 (clojure.lang.Reflector/getAsMethodOfAccessibleBase (or context-class (.getDeclaringClass m))
+                                                                                     m
+                                                                                     target)
+                                 m)]
+              (when (nil? accessible-m)
+                (throw (IllegalArgumentException.
+                        (str "Can't call public method of non-public class: " m))))
+              (try
+                (let [ret (.invoke accessible-m target (box-args (.getParameterTypes accessible-m) args))]
+                  (Reflector/prepRet (.getReturnType accessible-m) ret))
+                (catch Exception e
+                  (throw (clojure.lang.Util/sneakyThrow
+                          (or (.getCause e) e)))))))))))
    :cljr
    (defn invoke-matching-method
      [& args]

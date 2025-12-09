@@ -38,6 +38,7 @@
    :cljr
    (deftype SciRecord [rec-name
                        type
+                       basis-fields
                        var ext-map
                        ^:unsynchronized-mutable my_hash
                        ^:unsynchronized-mutable my_hasheq]
@@ -58,7 +59,7 @@
        (meta ext-map))
      (withMeta [_ m]
        (SciRecord.
-        rec-name type var (with-meta ext-map m) 0 0))
+        rec-name type basis-fields var (with-meta ext-map m) 0 0))
 
      clojure.lang.ILookup
      (valAt [_this k]
@@ -88,9 +89,11 @@
        (.entryAt ^clojure.lang.IPersistentMap ext-map k))
      (seq [_this] (.seq ^clojure.lang.IPersistentMap ext-map))
      (^clojure.lang.IPersistentMap assoc [_this k v]
-       (SciRecord. rec-name type var (assoc ext-map k v) 0 0))
+       (SciRecord. rec-name type basis-fields var (assoc ext-map k v) 0 0))
      (without [_this k]
-       (SciRecord. rec-name type var (dissoc ext-map k) 0 0))
+       (if (contains? basis-fields k)
+         (dissoc ext-map k)
+         (SciRecord. rec-name type basis-fields var (dissoc ext-map k) 0 0)))
 
      System.Collections.IDictionary
      (get_Count [_this]
@@ -134,7 +137,9 @@
    :default
    (deftype SciRecord [rec-name
                        type
-                       var ext-map
+                       basis-fields
+                       var
+                       ext-map
                        ^:unsynchronized-mutable my_hash
                        ^:unsynchronized-mutable my_hasheq]
      clojure.lang.IRecord ;; marker interface
@@ -162,8 +167,7 @@
      (meta [_]
        (meta ext-map))
      (withMeta [_ m]
-       (SciRecord.
-        rec-name type var (with-meta ext-map m) 0 0))
+       (SciRecord. rec-name type basis-fields var (with-meta ext-map m) 0 0))
 
      clojure.lang.ILookup
      (valAt [_this k]
@@ -192,9 +196,11 @@
      (iterator [_this]
        (clojure.lang.RT/iter ext-map))
      (assoc [_this k v]
-       (SciRecord. rec-name type var (assoc ext-map k v) 0 0))
+       (SciRecord. rec-name type basis-fields var (assoc ext-map k v) 0 0))
      (without [_this k]
-       (SciRecord. rec-name type var (dissoc ext-map k) 0 0))
+       (if (contains? basis-fields k)
+         (dissoc ext-map k)
+         (SciRecord. rec-name type basis-fields var (dissoc ext-map k) 0 0)))
 
      java.util.Map
      java.io.Serializable
@@ -242,13 +248,14 @@
 #?(:cljs
    (deftype SciRecord [rec-name
                        type
+                       basis-fields
                        var ext-map
                        ^:mutable my_hash]
      IRecord ;; marker interface
 
      ICloneable
      (-clone [_]
-       (new SciRecord rec-name type var ext-map my_hash))
+       (new SciRecord rec-name type basis-fields var ext-map my_hash))
 
      IHash
      (-hash [_]
@@ -275,7 +282,7 @@
      IWithMeta
      (-with-meta [_ m]
        (new SciRecord
-            rec-name type var (with-meta ext-map m) my_hash))
+            rec-name type basis-fields var (with-meta ext-map m) my_hash))
 
      ILookup
      (-lookup [_ k]
@@ -299,11 +306,13 @@
      (-contains-key? [_ k]
        (-contains-key? ext-map k))
      (-assoc [_ k v]
-       (new SciRecord rec-name type var (assoc ext-map k v) nil))
+       (new SciRecord rec-name type basis-fields var (assoc ext-map k v) nil))
 
      IMap
      (-dissoc [_ k]
-       (new SciRecord rec-name type var (dissoc ext-map k) nil))
+       (if (contains? basis-fields k)
+         (dissoc ext-map k)
+         (new SciRecord rec-name type basis-fields var (dissoc ext-map k) nil)))
 
      ISeqable
      (-seq [_]
@@ -340,12 +349,12 @@
    (defmethod print-method SciRecord [v w]
      (-sci-print-method v w)))
 
-#?(:cljs (defn ->record-impl [rec-name type var m]
-           (SciRecord. rec-name type var m nil))
-   :cljr (defn ->record-impl [rec-name type var m]
-           (SciRecord. rec-name type var m 0 0))
-   :default (defn ->record-impl [rec-name type var m]
-              (SciRecord. rec-name type var m 0 0)))
+#?(:clj  (defn ->record-impl [rec-name type basis-fields var m]
+           (SciRecord. rec-name type basis-fields var m 0 0))
+   :cljr (defn ->record-impl [rec-name type basis-fields var m]
+           (SciRecord. rec-name type basis-fields var m 0 0))
+   :cljs (defn ->record-impl [rec-name type basis-fields var m]
+           (SciRecord. rec-name type basis-fields var m nil)))
 
 (defn defrecord [[_fname & _ :as form] _ record-name fields & raw-protocol-impls]
   (let [ctx (store/get-ctx)]
@@ -356,6 +365,7 @@
             constructor-fn-sym (symbol (str "__" factory-fn-str "__ctor__"))
             map-factory-sym (symbol (str "map" factory-fn-str))
             keys (mapv keyword fields)
+            key-set (set keys)
             rec-type (symbol (str (munge (utils/current-ns-name)) "." record-name))
             protocol-impls (utils/split-when symbol? raw-protocol-impls)
             field-set (set fields)
@@ -416,7 +426,6 @@
                       impls)))
              protocol-impls
              raw-protocol-impls)
-            arg-syms (mapv #(symbol (name %)) keys)
             nil-map (zipmap (map keyword field-set) (repeat nil))]
         `(do
            (declare ~record-name ~factory-fn-sym ~constructor-fn-sym ~map-factory-sym)
@@ -429,18 +438,26 @@
                 :sci.impl/var (list 'var record-name)
                 :sci.impl.record/map-constructor (list 'var map-factory-sym)}))
            (defn ~constructor-fn-sym
-             ([~@arg-syms]
-              (~constructor-fn-sym ~@arg-syms nil nil))
-             ([~@arg-syms meta# ext#]
-              (sci.impl.records/->record-impl '~rec-type ~rec-type (var ~record-name)
-                                              (cond-> (zipmap ~keys ~arg-syms)
+             (~fields
+              (~constructor-fn-sym ~@fields nil nil))
+             ([~@fields meta# ext#]
+              (sci.impl.records/->record-impl '~rec-type 
+                                              ~rec-type 
+                                              ~key-set
+                                              (var ~record-name)
+                                              (cond-> (zipmap ~keys ~fields)
                                                 ext# (merge ext#)
                                                 meta# (with-meta meta#)))))
+
            (defn ~factory-fn-sym
-             ([~@arg-syms]
-              (~constructor-fn-sym ~@arg-syms nil nil)))
+             (~fields
+              (~constructor-fn-sym ~@fields nil nil)))
            (defn ~map-factory-sym [m#]
-             (sci.impl.records/->record-impl '~rec-type ~rec-type (var ~record-name) (merge '~nil-map m#)))
+             (sci.impl.records/->record-impl '~rec-type
+                                             ~rec-type
+                                             ~key-set
+                                             (var ~record-name)
+                                             (merge '~nil-map m#)))
            ~@protocol-impls
            ~record-name)))))
 
