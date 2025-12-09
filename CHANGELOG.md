@@ -15,6 +15,11 @@ SCI is used in [babashka](https://github.com/babashka/babashka),
 - Add `println-str`
 - Fix [#997](https://github.com/babashka/sci/issues/997): Var is mistaken for local when used under the same name in a `let` body
 - Fix [#1001](https://github.com/babashka/sci/issues/1001): JS interop with reserved js keyword fails (regression of [#987](https://github.com/babashka/sci/issues/987))
+- `sci.impl.Reflector` was rewritten into Clojure
+- Fix [babashka/babashka#1886](https://github.com/babashka/babashka/issues/1886): Return a map when dissociating a
+  record basis field.
+- Fix [#1011](https://github.com/babashka/sci/issues/1011): reset ns metadata when evaluating ns form multiple times
+- Fix for https://github.com/babashka/babashka/issues/1899
 
 ## 0.10.49 (2025-08-22)
 

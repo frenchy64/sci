@@ -5,7 +5,7 @@
             #?@(:cljs []
                 :default [[sci.impl.reflector :as reflector]]))
   #?(:clj (:import
-           [java.lang.reflect Modifier])))
+           [java.lang.reflect Field Modifier])))
 
 ;; see https://github.com/clojure/clojure/blob/master/src/jvm/clojure/lang/Reflector.java
 ;; see invokeStaticMethod, getStaticField, etc.
@@ -47,24 +47,25 @@
                (let [args (.map args #(sci.impl.types/eval % ctx bindings))]
                  (js/Reflect.apply method obj args))
                (throw (js/Error. (str "Could not find instance method: " method-name))))]
-      :default
-      [[ctx bindings obj target-class method ^objects args arg-count arg-types]
-       (let [methods (meth-cache ctx target-class method arg-count #(reflector/get-methods target-class arg-count method false) :instance-methods)
+      :clj
+      [[ctx bindings obj ^Class target-class method ^objects args arg-count arg-types]
+       (let [^java.util.List methods
+             (meth-cache ctx target-class method arg-count #(reflector/get-methods target-class arg-count method false) :instance-methods)
              zero-args? (zero? arg-count)]
          (if (and zero-args?
                   #?(:clj (.isEmpty ^java.util.List methods)
                      :default (empty? methods)))
            (invoke-instance-field obj target-class method)
-           (let [args-array (object-array arg-count)]
-             (areduce args idx _ret nil
-                      (aset args-array idx (types/eval (aget args idx) ctx bindings)))
-             ;; Note: I also tried caching the method that invokeMatchingMethod looks up, but retrieving it from the cache was actually more expensive than just doing the invocation!
-             ;; See getMatchingMethod in Reflector
-             (reflector/invoke-matching-method method methods target-class obj args-array arg-types))))]))
+           (do (let [args-array (object-array arg-count)]
+                 (areduce args idx _ret nil
+                          (aset args-array idx (sci.impl.types/eval (aget args idx) ctx bindings)))
+                 ;; Note: I also tried caching the method that invokeMatchingMethod looks up, but retrieving it from the cache was actually more expensive than just doing the invocation!
+                 ;; See getMatchingMethod in Reflector
+                 (reflector/invoke-matching-method method methods target-class obj args-array arg-types)))))]))
 
-(defn get-static-field [class field-name-sym]
-  #?(:cljs (unchecked-get class field-name-sym)
-     :default (reflector/get-static-field class (str field-name-sym))))
+(defn get-static-field [^Class class field-name-sym]
+  #?(:clj (reflector/get-static-field class (str field-name-sym))
+     :cljs (unchecked-get class field-name-sym)))
 
 #?(:cljs
    (def fn-eval-allowed?
@@ -91,8 +92,8 @@
    (defn invoke-js-constructor* [ctx bindings constructor args]
      (js/Reflect.construct constructor (.map args #(sci.impl.types/eval % ctx bindings)))))
 
-#?(:cljs nil :default
-   (defn invoke-constructor [class args]
+#?(:clj
+   (defn invoke-constructor [^Class class args]
      (reflector/invoke-constructor class (object-array args))))
 
 (defn invoke-static-method #?(:cljs [ctx bindings class method args]

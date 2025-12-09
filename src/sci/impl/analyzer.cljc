@@ -994,7 +994,7 @@
                           ;; of the same name, in which case it resolves to a
                           ;; call to the method.
                           (if-let [_
-                                   (try (reflector/get-static-field instance-expr method-name)
+                                   (try (reflector/get-static-field ^Class instance-expr ^String method-name)
                                         (catch IllegalArgumentException _ nil))]
                             (sci.impl.types/->Node
                              (interop/get-static-field instance-expr method-name)
@@ -1208,7 +1208,7 @@
         attr-map (if docstring
                    (assoc attr-map :doc docstring)
                    attr-map)]
-    (set-namespace! ctx ns-name attr-map)
+    (set-namespace! ctx ns-name attr-map true)
     (loop [exprs exprs
            ret []]
       (if exprs
